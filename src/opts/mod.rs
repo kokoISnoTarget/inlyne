@@ -7,7 +7,7 @@ use std::path::Path;
 
 use crate::color;
 pub use cli::{Cli, Commands, ConfigCmd, ThemeType, View};
-pub use config::{Config, DebugSection, FontOptions, KeybindingsSection, MetricsExporter};
+pub use config::{Config, DebugSection, FontOptions, KeybindingsSection, MetricsExporter, Position, Size};
 
 use crate::history::History;
 use anyhow::Result;
@@ -52,6 +52,8 @@ pub struct Opts {
     pub keybindings: KeybindingsSection,
     pub color_scheme: Option<ResolvedTheme>,
     pub metrics: Option<MetricsExporter>,
+    pub position: Option<Position>,
+    pub size: Option<Size>
 }
 
 impl Opts {
@@ -93,6 +95,8 @@ impl Opts {
             font_options,
             keybindings,
             debug,
+            size,
+            position,
         } = config;
 
         let View {
@@ -101,6 +105,8 @@ impl Opts {
             scale: args_scale,
             config: _,
             page_width: args_page_width,
+            size: v_size,
+            position: v_position,
         } = args;
 
         let DebugSection { metrics } = debug;
@@ -125,6 +131,9 @@ impl Opts {
         let font_opts = font_options.unwrap_or_default();
         let page_width = args_page_width.or(config_page_width);
         let lines_to_scroll = lines_to_scroll.into();
+        
+        let position = v_position.or(position);
+        let size = v_size.or(size);
 
         Ok(Self {
             history: History::new(file_path),
@@ -136,6 +145,8 @@ impl Opts {
             keybindings,
             color_scheme: resolved_theme,
             metrics,
+            position,
+            size
         })
     }
 
