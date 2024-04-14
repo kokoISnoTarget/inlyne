@@ -1,6 +1,7 @@
 mod html;
 #[cfg(test)]
 mod tests;
+mod hir;
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -361,6 +362,7 @@ impl HtmlInterpreter {
             }
         };
         match tag_name {
+            TagName::Root => {},
             TagName::BlockQuote => {
                 // FIXME blockquotes in list have no marker
                 self.push_current_textbox();
@@ -617,6 +619,7 @@ impl HtmlInterpreter {
             }
         };
         match tag_name {
+            TagName::Root => {},
             TagName::Underline => self.state.text_options.underline -= 1,
             TagName::Strikethrough => self.state.text_options.strike_through -= 1,
             TagName::Small => self.state.text_options.small -= 1,
