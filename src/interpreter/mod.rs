@@ -1,8 +1,10 @@
+mod ast;
+mod hir;
 mod html;
 #[cfg(test)]
 mod tests;
-mod hir;
 
+use std::borrow::BorrowMut;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::slice;
@@ -23,6 +25,7 @@ use html::{
     Attr, Element as InterpreterElement, TagName,
 };
 
+use crate::interpreter::hir::Hir;
 use comrak::Anchorizer;
 use glyphon::FamilyOwned;
 use html5ever::tendril::*;
@@ -66,6 +69,7 @@ impl State {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
 struct Span {
     color: [f32; 4],
     weight: FontWeight,
@@ -210,7 +214,8 @@ impl HtmlInterpreter {
 
         let span_color = self.native_color(self.theme.text_color);
         let code_highlighter = self.theme.code_highlighter.clone();
-        let mut tok = Tokenizer::new(self, TokenizerOpts::default());
+        //let mut tok = Tokenizer::new(self, TokenizerOpts::default());
+        let mut tok = Tokenizer::new(Hir::new(), TokenizerOpts::default());
 
         for md_string in receiver {
             tracing::debug!(
@@ -218,10 +223,10 @@ impl HtmlInterpreter {
                 md_string.len()
             );
 
-            if tok.sink.should_queue.load(AtomicOrdering::Relaxed) {
-                tok.sink.state = State::with_span_color(span_color);
-                tok.sink.current_textbox = TextBox::new(Vec::new(), tok.sink.hidpi_scale);
-                tok.sink.stopped = false;
+            //if tok.sink.should_queue.load(AtomicOrdering::Relaxed) {
+                //tok.sink.state = State::with_span_color(span_color);
+                //tok.sink.current_textbox = TextBox::new(Vec::new(), tok.sink.hidpi_scale);
+                //tok.sink.stopped = false;
                 let htmlified = markdown_to_html(&md_string, code_highlighter.clone());
 
                 input.push_back(
@@ -234,7 +239,16 @@ impl HtmlInterpreter {
                 let _ = tok.feed(&mut input);
                 assert!(input.is_empty());
                 tok.end();
-            }
+            
+                let ast = ast::Ast {
+                    surface_format: self.surface_format.clone(),
+                    hidpi_scale: self.hidpi_scale.clone(),
+                    theme: self.theme.clone(),
+                    ..ast::Ast::new()
+                };
+                *self.element_queue.lock().unwrap() = ast.interpret(std::mem::take(&mut tok.sink)).into_inner();
+                self.window.finished_single_doc();
+            //}
         }
     }
 
@@ -362,7 +376,7 @@ impl HtmlInterpreter {
             }
         };
         match tag_name {
-            TagName::Root => {},
+            TagName::Root => {}
             TagName::BlockQuote => {
                 // FIXME blockquotes in list have no marker
                 self.push_current_textbox();
@@ -586,7 +600,7 @@ impl HtmlInterpreter {
                 if is_checkbox {
                     // Checkbox uses a custom prefix, so remove pending text prefix
                     let _ = self.state.pending_list_prefix.take();
-                    self.current_textbox.set_checkbox(is_checked);
+                    self.current_textbox.set_checkbox(Some(is_checked));
                     self.state.element_stack.push(InterpreterElement::Input);
                 }
             }
@@ -619,7 +633,7 @@ impl HtmlInterpreter {
             }
         };
         match tag_name {
-            TagName::Root => {},
+            TagName::Root => {}
             TagName::Underline => self.state.text_options.underline -= 1,
             TagName::Strikethrough => self.state.text_options.strike_through -= 1,
             TagName::Small => self.state.text_options.small -= 1,
