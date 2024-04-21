@@ -7,6 +7,7 @@
 //    pub content: Vec<TextOrHirNode>,
 //}
 
+use std::cell::{Cell, Ref, RefCell};
 use crate::color::{native_color, Theme};
 use crate::interpreter::hir::{unwrap_hir_node, Hir, HirNode, TextOrHirNode};
 use crate::interpreter::html::style::{FontStyle, FontWeight, Style, TextDecoration};
@@ -21,6 +22,8 @@ use comrak::Anchorizer;
 use glyphon::FamilyOwned;
 use std::collections::VecDeque;
 use std::num::NonZeroU8;
+use std::ops::DerefMut;
+use lyon::geom::utils::tangent;
 use wgpu::TextureFormat;
 
 #[derive(Debug, Copy, Clone, Default)]
@@ -58,10 +61,10 @@ pub(crate) struct Ast {
     pub ast: VecDeque<Element>,
     pub anchorizer: Anchorizer,
     pub theme: Theme,
-    pub current_textbox: TextBox,
+    pub current_textbox: RefCell<TextBox>,
     pub hidpi_scale: f32,
     pub surface_format: TextureFormat,
-    pub link: Option<String>,
+    pub link: Cell<Option<String>>,
 }
 impl Ast {
     pub fn new() -> Self {
@@ -72,7 +75,7 @@ impl Ast {
             hidpi_scale: Default::default(),
             theme: Theme::dark_default(),
             surface_format: TextureFormat::Bgra8UnormSrgb,
-            link: None,
+            link: Cell::new(None),
         }
     }
     pub fn interpret(mut self, hir: Hir) -> Self {
@@ -87,7 +90,7 @@ impl Ast {
     fn process_content(&mut self, inherited_state: InheritedState, content: Content) {
         for node in content {
             match node {
-                TextOrHirNode::Text(str) => self.push_text(inherited_state, str),
+                TextOrHirNode::Text(str) => self.text(self.current_textbox.borrow_mut().deref_mut(), inherited_state, str),
                 TextOrHirNode::Hir(node) => {
                     self.process_node(inherited_state, unwrap_hir_node(node))
                 }
@@ -111,8 +114,8 @@ impl Ast {
             TagName::Anchor => {
                 for attr in attributes {
                     match attr {
-                        Attr::Href(link) => self.link = Some(link),
-                        Attr::Anchor(a) => self.current_textbox.set_anchor(a),
+                        Attr::Href(link) => self.link.set(Some(link)),
+                        Attr::Anchor(a) => self.current_textbox.borrow_mut().set_anchor(a),
                         _ => {}
                     }
                 }
@@ -122,15 +125,6 @@ impl Ast {
                 self.push_text_box(inherited_state);
                 self.process_content(inherited_state, content);
                 self.push_text_box(inherited_state);
-            }
-            TagName::Table => {
-                return;
-                let table = Table::new();
-                todo!("Table implementation");
-                //handle_table(...)
-
-                self.push_element(table);
-                return;
             }
             //_ => {
             //    tracing::warn!("Interpreter didn't implement {:?}", node.tag);
@@ -175,6 +169,9 @@ impl Ast {
                 tracing::warn!("Summary can only be in an Details element");
                 return;
             }
+            TagName::Section => {
+                return;
+            }
             TagName::EmphasisOrItalic => {
                 inherited_state.text_options.italic = true;
                 self.process_content(inherited_state, content);
@@ -185,21 +182,21 @@ impl Ast {
 
                 inherited_state.set_align(attributes.iter().find_map(|attr| attr.to_align()));
                 inherited_state.text_options.bold = true;
-                self.current_textbox.font_size *= header.size_multiplier();
-                
+                self.current_textbox.borrow_mut().font_size *= header.size_multiplier();
+
                 if header == HeaderType::H1 {
                     inherited_state.text_options.underline = true;
                 }
                 self.process_content(inherited_state, content);
 
                 let anchor = self
-                    .current_textbox
+                    .current_textbox.borrow()
                     .texts
                     .iter()
                     .flat_map(|t| t.text.chars())
                     .collect();
                 let anchor = self.anchorizer.anchorize(anchor);
-                self.current_textbox.set_anchor(format!("#{anchor}"));
+                self.current_textbox.borrow_mut().set_anchor(format!("#{anchor}"));
                 self.push_text_box(inherited_state);
                 self.push_spacer();
             }
@@ -208,15 +205,15 @@ impl Ast {
                 self.process_content(inherited_state, content);
             }
             TagName::Picture => {
-                tracing::warn!("");
+                tracing::warn!("No picture impl");
                 return;
             }
             TagName::Source => {
-                tracing::warn!("");
+                tracing::warn!("No source impl");
                 return;
             }
             TagName::Image => {
-                tracing::warn!("");
+                tracing::warn!("No image impl");
                 return;
             }
             TagName::Input => {
@@ -230,7 +227,7 @@ impl Ast {
                     }
                 }
                 if is_checkbox {
-                    self.current_textbox.set_checkbox(Some(is_checked));
+                    self.current_textbox.borrow_mut().set_checkbox(Some(is_checked));
                 }
                 self.process_content(inherited_state, content);
             }
@@ -240,27 +237,27 @@ impl Ast {
             TagName::OrderedList => {
                 return;
             }
+            TagName::UnorderedList => {
+                return;
+            }
             TagName::PreformattedText => {
                 self.push_text_box(inherited_state);
                 let style = attributes.iter().find_map(|attr| attr.to_style()).unwrap_or_default();
                 for style in style::Iter::new(&style) {
                     if let Style::BackgroundColor(color) = style {
                         let native_color = self.native_color(color);
-                        self.current_textbox.set_background_color(native_color);
+                        self.current_textbox.borrow_mut().set_background_color(native_color);
                     }
                 }
                 inherited_state.text_options.pre_formatted = true;
-                self.current_textbox.set_code_block(true);
+                self.current_textbox.borrow_mut().set_code_block(true);
                 self.process_content(inherited_state, content);
 
                 self.push_text_box(inherited_state);
-                
+
                 self.push_spacer();
                 inherited_state.text_options.pre_formatted = false;
-                self.current_textbox.set_code_block(false);
-            }
-            TagName::Section => {
-                return;
+                self.current_textbox.borrow_mut().set_code_block(false);
             }
             TagName::Small => {
                 inherited_state.text_options.small = true;
@@ -288,27 +285,31 @@ impl Ast {
                 inherited_state.text_options.strike_through = true;
                 self.process_content(inherited_state, content);
             }
-            TagName::TableBody => {
+            TagName::Table => {
+                let mut table = Table::new();
+                self.process_table(&mut table, inherited_state, content);
+                self.push_element(table);
                 return;
             }
-            TagName::TableDataCell => {
-                return;
-            }
-            TagName::TableHead => {
-                return;
-            }
-            TagName::TableHeader => {
+            TagName::TableHead | TagName::TableBody => {
+                tracing::warn!("TableHead and TableBody not supported");
                 return;
             }
             TagName::TableRow => {
+                tracing::warn!("Summary can only be in an Table element");
+                return;
+            }
+            TagName::TableDataCell => {
+                tracing::warn!("Summary can only be in an TableRow or an TableHeader element");
+                return;
+            }
+            TagName::TableHeader => {
+                tracing::warn!("Summary can only be in an TableRow element");
                 return;
             }
             TagName::Underline => {
                 inherited_state.text_options.underline = true;
                 self.process_content(inherited_state, content);
-            }
-            TagName::UnorderedList => {
-                return;
             }
             TagName::Root => {
                 tracing::error!("Root element can't reach interpreter.");
@@ -317,20 +318,20 @@ impl Ast {
         }
     }
 
-    fn push_text(&mut self, state: InheritedState, mut string: String) {
+    fn text(&self, text_box: &mut TextBox, state: InheritedState, mut string: String){
         let text_native_color = self.native_color(self.theme.text_color);
         if string == "\n" {
             if state.text_options.pre_formatted {
-                self.current_textbox.texts.push(Text::new(
+                text_box.texts.push(Text::new(
                     "\n".to_string(),
                     self.hidpi_scale,
                     text_native_color,
                 ));
             }
-            if let Some(last_text) = self.current_textbox.texts.last() {
+            if let Some(last_text) = text_box.texts.last() {
                 if let Some(last_char) = last_text.text.chars().last() {
                     if !last_char.is_whitespace() {
-                        self.current_textbox.texts.push(Text::new(
+                        text_box.texts.push(Text::new(
                             " ".to_string(),
                             self.hidpi_scale,
                             text_native_color,
@@ -348,10 +349,10 @@ impl Ast {
             //    }
             //}
         } else if string.trim().is_empty() && !state.text_options.pre_formatted {
-            if let Some(last_text) = self.current_textbox.texts.last() {
+            if let Some(last_text) = text_box.texts.last() {
                 if let Some(last_char) = last_text.text.chars().last() {
                     if !last_char.is_whitespace() {
-                        self.current_textbox.texts.push(Text::new(
+                        text_box.texts.push(Text::new(
                             " ".to_string(),
                             self.hidpi_scale,
                             text_native_color,
@@ -360,7 +361,7 @@ impl Ast {
                 }
             }
         } else {
-            if self.current_textbox.texts.is_empty() && !state.text_options.pre_formatted {
+            if text_box.texts.is_empty() && !state.text_options.pre_formatted {
                 #[allow(
                 unknown_lints, // Rust is still bad with back compat on new lints
                 clippy::assigning_clones // Hit's a borrow-check issue. Needs a different impl
@@ -380,7 +381,7 @@ impl Ast {
             //    }
             //}
             if state.text_options.block_quote >= 1 {
-                self.current_textbox
+                text_box
                     .set_quote_block(state.text_options.block_quote as usize);
             }
             if state.text_options.code {
@@ -420,12 +421,12 @@ impl Ast {
             }
             if state.text_options.strike_through {
                 text = text.make_striked(true);
-            } 
+            }
 
             if state.text_options.small {
-                self.current_textbox.font_size = 12.;
+                text_box.font_size = 12.;
             }
-            self.current_textbox.texts.push(text);
+            text_box.texts.push(text);
         }
     }
 
@@ -443,10 +444,10 @@ impl Ast {
         //}
 
         let mut tb = std::mem::replace(
-            &mut self.current_textbox,
+            self.current_textbox.borrow_mut().deref_mut(),
             TextBox::new(vec![], self.hidpi_scale),
         );
-        self.current_textbox.indent = state.global_indent;
+        self.current_textbox.borrow_mut().indent = state.global_indent;
 
         if !tb.texts.is_empty() {
             let content = tb.texts.iter().any(|text| !text.text.is_empty());
@@ -481,22 +482,109 @@ impl Ast {
     fn native_color(&self, color: u32) -> [f32; 4] {
         native_color(color, &self.surface_format)
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use crate::interpreter::ast::{Ast, TextOptions};
-    use crate::interpreter::hir::Hir;
-    use html5ever::tendril::StrTendril;
-    use html5ever::tokenizer::{BufferQueue, Tokenizer};
+    // https://html.spec.whatwg.org/multipage/tables.html#the-table-element
+    fn process_table(&mut self, table: &mut Table, inherited_state: InheritedState, content: Content) {
+        for node in content {
+            let node = if let TextOrHirNode::Hir(node) = node {
+                unwrap_hir_node(node)
+            } else  {
+                tracing::warn!("No text node can be in an Table.");
+                continue;
+            };
 
-    fn prepare<T: Into<String>>(html: T) -> Hir {
-        let mut buffer = BufferQueue::default();
-        buffer.push_back(StrTendril::from(html.into()));
+            match node.tag {
+                TagName::TableHead | TagName::TableBody => {
+                    self.process_table_head_body(table, inherited_state, node.content);
+                }
+                TagName::TableRow => {
+                    table.rows.push(vec![]);
+                    self.process_table_row(table, inherited_state, node.content)
+                }
+                _ => {
+                    tracing::warn!("Only TableHead, TableBody, TableRow and TableFoot can be inside an table, found: {:?}", node.tag);
+                    continue;
+                }
+            }
+        }
+        // TODO: filter out empty rows. (without cloning)
+    }
+    fn process_table_head_body(&mut self, table: &mut Table, inherited_state: InheritedState, content: Content) {
+        for node in content {
+            let node = if let TextOrHirNode::Hir(node) = node {
+                unwrap_hir_node(node)
+            } else  {
+                tracing::warn!("No text node can be in an TableHead or TableBody.");
+                continue;
+            };
 
-        let mut tokenizer = Tokenizer::new(Hir::new(), Default::default());
-        let _ = tokenizer.feed(&mut buffer);
-        tokenizer.end();
-        tokenizer.sink
+            match node.tag {
+                TagName::TableRow => {
+                    table.rows.push(vec![]);
+                    self.process_table_row(table, inherited_state, node.content)
+                }
+                _ => {
+                    tracing::warn!("Only TableRows can be inside an TableHead or TableBody, found: {:?}", node.tag);
+                    continue;
+                }
+            }
+        }
+    }
+
+    // https://html.spec.whatwg.org/multipage/tables.html#the-tr-element
+    fn process_table_row(&mut self, table: &mut Table, inherited_state: InheritedState, content: Content) {
+        for node in content {
+            let node = if let TextOrHirNode::Hir(node) = node {
+                unwrap_hir_node(node)
+            } else  {
+                tracing::warn!("No text node can be in an TableRow.");
+                continue;
+            };
+            
+            let mut inherited_state = inherited_state;
+            inherited_state.text_options.set_align(node.attributes.iter().find_map(|attr| attr.to_align()));
+            dbg!(&inherited_state);
+            match node.tag {
+                TagName::TableHeader => self.process_table_header(table, inherited_state, node.content),
+                TagName::TableDataCell => self.process_table_cell(table, inherited_state, node.content),
+                _ => {
+                    tracing::warn!("Only TableHead, TableBody, TableRow and TableFoot can be inside an table, found: {:?}", node.tag);
+                    continue;
+                }
+            }
+        }
+    }
+
+    // https://html.spec.whatwg.org/multipage/tables.html#the-th-element
+    fn process_table_header(&mut self, table: &mut Table, mut inherited_state: InheritedState, content: Content) {
+        let row = table.rows.last_mut().expect("There should be at least one row.");
+        // TODO allow anything inside tables not only text.
+        inherited_state.text_options.bold = true;
+        for node in content {
+            if let TextOrHirNode::Text(text) = node {
+                let mut tb = TextBox::new(vec![], self.hidpi_scale);
+                self.text(&mut tb, inherited_state, text);
+                row.push(tb);
+            } else {
+                tracing::warn!("Currently only text is allowed in an TableHeader.")
+            }
+        }
+    }
+    
+    // https://html.spec.whatwg.org/multipage/tables.html#the-td-element
+    fn process_table_cell(&mut self, table: &mut Table, inherited_state: InheritedState, content: Content) {
+        let row = table.rows.last_mut().expect("There should be at least one row.");
+        // TODO allow anything inside tables not only text.
+        // when doing this make process_node generic over some output so it can be use here
+
+        for node in content {
+            if let TextOrHirNode::Text(text) = node {
+                let mut tb = TextBox::new(vec![], self.hidpi_scale);
+                self.text(&mut tb, inherited_state, text);
+                row.push(tb);
+            } else {
+                tracing::warn!("Currently only text is allowed in an TableDataCell.")
+            }
+        }
     }
 }
