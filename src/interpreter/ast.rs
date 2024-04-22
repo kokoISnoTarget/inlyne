@@ -49,6 +49,15 @@ struct InheritedState {
     list_prefix: Option<Option<NonZeroU8>>,
 }
 impl InheritedState {
+    fn with_span_color(span_color: [f32; 4]) -> Self {
+        Self {
+            span: Span::with_color(span_color),
+            ..Default::default()
+        }
+    }
+}
+
+impl InheritedState {
     fn set_align(&mut self, align: Option<Align>) {
         self.text_options.align = align.or(self.text_options.align);
     }
@@ -57,7 +66,7 @@ impl InheritedState {
 type Content = Vec<TextOrHirNode>;
 type Attributes = Vec<Attr>;
 
-pub(crate) struct Ast {
+pub struct Ast {
     pub ast: VecDeque<Element>,
     pub anchorizer: Anchorizer,
     pub theme: Theme,
@@ -80,7 +89,9 @@ impl Ast {
     }
     pub fn interpret(mut self, hir: Hir) -> Self {
         let content = hir.content();
-        self.process_content(Default::default(), content);
+        let state = InheritedState::with_span_color(self.native_color(self.theme.code_color));
+
+        self.process_content(state, content);
         self
     }
     pub fn into_inner(self) -> VecDeque<Element> {
@@ -154,7 +165,7 @@ impl Ast {
                 inherited_state.text_options.code = true;
                 self.process_content(inherited_state, content);
             }
-            TagName::Details => {
+            TagName::Details => { //TODO
                 return;
                 self.push_text_box(inherited_state);
                 self.push_spacer();
@@ -169,7 +180,7 @@ impl Ast {
                 tracing::warn!("Summary can only be in an Details element");
                 return;
             }
-            TagName::Section => {
+            TagName::Section => { //TODO
                 return;
             }
             TagName::EmphasisOrItalic => {
@@ -232,13 +243,14 @@ impl Ast {
                 self.process_content(inherited_state, content);
             }
             TagName::ListItem => {
-                
+                tracing::warn!("ListItem can only be in an List element");
+                return;
             }
             TagName::OrderedList => {
-                return;
+                self.process_ordered_list(inherited_state, content, attributes);
             }
             TagName::UnorderedList => {
-                return;
+                self.process_unordered_list(inherited_state, content, attributes);
             }
             TagName::PreformattedText => {
                 self.push_text_box(inherited_state);
@@ -254,7 +266,6 @@ impl Ast {
                 self.process_content(inherited_state, content);
 
                 self.push_text_box(inherited_state);
-
                 self.push_spacer();
                 inherited_state.text_options.pre_formatted = false;
                 self.current_textbox.borrow_mut().set_code_block(false);
@@ -276,9 +287,6 @@ impl Ast {
                         _ => {}
                     }
                 }
-                if inherited_state.span.weight == FontWeight::Bold {
-                    dbg!(&content, &inherited_state);
-                }
                 self.process_content(inherited_state, content);
             }
             TagName::Strikethrough => {
@@ -288,7 +296,9 @@ impl Ast {
             TagName::Table => {
                 let mut table = Table::new();
                 self.process_table(&mut table, inherited_state, content);
+                self.push_spacer();
                 self.push_element(table);
+                self.push_spacer();
                 return;
             }
             TagName::TableHead | TagName::TableBody => {
@@ -485,15 +495,10 @@ impl Ast {
 
     // https://html.spec.whatwg.org/multipage/tables.html#the-table-element
     fn process_table(&mut self, table: &mut Table, inherited_state: InheritedState, content: Content) {
-        for node in content {
-            let node = if let TextOrHirNode::Hir(node) = node {
-                unwrap_hir_node(node)
-            } else  {
-                tracing::warn!("No text node can be in an Table.");
-                continue;
-            };
-
-            match node.tag {
+        Self::process_node_content(
+            content,
+                |_| {},
+                |node| match node.tag {
                 TagName::TableHead | TagName::TableBody => {
                     self.process_table_head_body(table, inherited_state, node.content);
                 }
@@ -501,58 +506,40 @@ impl Ast {
                     table.rows.push(vec![]);
                     self.process_table_row(table, inherited_state, node.content)
                 }
-                _ => {
-                    tracing::warn!("Only TableHead, TableBody, TableRow and TableFoot can be inside an table, found: {:?}", node.tag);
-                    continue;
-                }
+                _ => tracing::warn!("Only TableHead, TableBody, TableRow and TableFoot can be inside an table, found: {:?}", node.tag),
             }
-        }
+        );
         // TODO: filter out empty rows. (without cloning)
     }
     fn process_table_head_body(&mut self, table: &mut Table, inherited_state: InheritedState, content: Content) {
-        for node in content {
-            let node = if let TextOrHirNode::Hir(node) = node {
-                unwrap_hir_node(node)
-            } else  {
-                tracing::warn!("No text node can be in an TableHead or TableBody.");
-                continue;
-            };
-
-            match node.tag {
+        Self::process_node_content(
+            content,
+            |_| {},
+            |node| match node.tag {
                 TagName::TableRow => {
                     table.rows.push(vec![]);
                     self.process_table_row(table, inherited_state, node.content)
                 }
-                _ => {
-                    tracing::warn!("Only TableRows can be inside an TableHead or TableBody, found: {:?}", node.tag);
-                    continue;
-                }
+                _ => tracing::warn!("Only TableRows can be inside an TableHead or TableBody, found: {:?}", node.tag)
             }
-        }
+        );
     }
 
     // https://html.spec.whatwg.org/multipage/tables.html#the-tr-element
     fn process_table_row(&mut self, table: &mut Table, inherited_state: InheritedState, content: Content) {
-        for node in content {
-            let node = if let TextOrHirNode::Hir(node) = node {
-                unwrap_hir_node(node)
-            } else  {
-                tracing::warn!("No text node can be in an TableRow.");
-                continue;
-            };
-            
-            let mut inherited_state = inherited_state;
-            inherited_state.text_options.set_align(node.attributes.iter().find_map(|attr| attr.to_align()));
-            dbg!(&inherited_state);
-            match node.tag {
-                TagName::TableHeader => self.process_table_header(table, inherited_state, node.content),
-                TagName::TableDataCell => self.process_table_cell(table, inherited_state, node.content),
-                _ => {
-                    tracing::warn!("Only TableHead, TableBody, TableRow and TableFoot can be inside an table, found: {:?}", node.tag);
-                    continue;
+        Self::process_node_content(
+            content,
+            |_| {},
+            |node| {
+                let mut inherited_state = inherited_state;
+                inherited_state.set_align(node.attributes.iter().find_map(|attr| attr.to_align()));
+                match node.tag {
+                    TagName::TableHeader => self.process_table_header(table, inherited_state, node.content),
+                    TagName::TableDataCell => self.process_table_cell(table, inherited_state, node.content),
+                    _ => tracing::warn!("Only TableHead, TableBody, TableRow and TableFoot can be inside an table, found: {:?}", node.tag),
                 }
             }
-        }
+        );
     }
 
     // https://html.spec.whatwg.org/multipage/tables.html#the-th-element
@@ -560,15 +547,15 @@ impl Ast {
         let row = table.rows.last_mut().expect("There should be at least one row.");
         // TODO allow anything inside tables not only text.
         inherited_state.text_options.bold = true;
-        for node in content {
-            if let TextOrHirNode::Text(text) = node {
+        Self::process_node_content(
+            content,
+            |text| {
                 let mut tb = TextBox::new(vec![], self.hidpi_scale);
                 self.text(&mut tb, inherited_state, text);
                 row.push(tb);
-            } else {
-                tracing::warn!("Currently only text is allowed in an TableHeader.")
-            }
-        }
+            },
+            |_| tracing::warn!("Currently only text is allowed in an TableHeader."),
+        );
     }
     
     // https://html.spec.whatwg.org/multipage/tables.html#the-td-element
@@ -577,13 +564,58 @@ impl Ast {
         // TODO allow anything inside tables not only text.
         // when doing this make process_node generic over some output so it can be use here
 
-        for node in content {
-            if let TextOrHirNode::Text(text) = node {
+        Self::process_node_content(
+            content,
+            |text| {
                 let mut tb = TextBox::new(vec![], self.hidpi_scale);
                 self.text(&mut tb, inherited_state, text);
                 row.push(tb);
-            } else {
-                tracing::warn!("Currently only text is allowed in an TableDataCell.")
+            },
+            |_| tracing::warn!("Currently only text is allowed in an TableDataCell.")
+        );
+    }
+    fn process_ordered_list(&mut self, inherited_state: InheritedState, content: Content, attributes: Attributes) {
+        let mut index = 1;
+        for attr in attributes {
+            if let Attr::Start(start) = attr {
+                index = start;
+            }
+        }
+        
+        Self::process_node_content(
+            content,
+            |_| {}, 
+            |node| match node.tag {
+                TagName::ListItem => {
+                    self.process_list_item(format!("{index}. "), inherited_state, node.content, node.attributes);
+                    index += 1;
+                }
+                _ => tracing::warn!("Only ListItems can be inside an List"),
+            }
+        )
+    }
+    fn process_unordered_list(&mut self, inherited_state: InheritedState, content: Content, attributes: Attributes) {
+        Self::process_node_content(content, 
+            |_| {},
+            |node| match node.tag {
+                TagName::ListItem => self.process_list_item("· ".to_string(), inherited_state, node.content, node.attributes),
+                _ => tracing::warn!("Only ListItems can be inside an List"),
+            }
+        );
+    }
+    fn process_list_item(&mut self, prefix: String, inherited_state: InheritedState, content: Content, attributes: Attributes) {
+        //let anchor = attributes.iter().find_map(|attr| attr.to_anchor());
+        //self.push_text_box(inherited_state);
+        //self.current_textbox.borrow_mut()
+    }
+    
+    fn process_node_content<T, N>(content: Content, mut text_fn: T, mut node_fn: N)
+        where T: FnMut(String), N: FnMut(HirNode)
+    {
+        for node in content {
+            match node {
+                TextOrHirNode::Text(text) => text_fn(text),
+                TextOrHirNode::Hir(node) => node_fn(unwrap_hir_node(node)),
             }
         }
     }
