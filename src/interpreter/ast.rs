@@ -1,8 +1,7 @@
-use std::cell::{Cell, Ref, RefCell};
 use crate::color::{native_color, Theme};
 use crate::interpreter::hir::{unwrap_hir_node, Hir, HirNode, TextOrHirNode};
 use crate::interpreter::html::style::{FontStyle, FontWeight, Style, TextDecoration};
-use crate::interpreter::html::{Attr, attr, HeaderType, Picture, style, TagName};
+use crate::interpreter::html::{attr, style, Attr, HeaderType, Picture, TagName};
 use crate::interpreter::{html, Span};
 use crate::positioner::{Positioned, Row, Section, Spacer, DEFAULT_MARGIN};
 use crate::table::Table;
@@ -11,11 +10,12 @@ use crate::utils::Align;
 use crate::{table, Element};
 use comrak::Anchorizer;
 use glyphon::FamilyOwned;
+use html5ever::tendril::{SliceExt, StrTendril};
+use lyon::geom::utils::tangent;
+use std::cell::{Cell, Ref, RefCell};
 use std::collections::VecDeque;
 use std::num::{NonZeroU8, NonZeroUsize};
 use std::ops::DerefMut;
-use html5ever::tendril::{SliceExt, StrTendril};
-use lyon::geom::utils::tangent;
 use wgpu::TextureFormat;
 
 #[derive(Debug, Clone, Default)]
@@ -92,7 +92,11 @@ impl Ast {
     fn process_content(&mut self, inherited_state: InheritedState, content: Content) {
         for node in content {
             match node {
-                TextOrHirNode::Text(str) => self.text(self.current_textbox.borrow_mut().deref_mut(), inherited_state.clone(), str),
+                TextOrHirNode::Text(str) => self.text(
+                    self.current_textbox.borrow_mut().deref_mut(),
+                    inherited_state.clone(),
+                    str,
+                ),
                 TextOrHirNode::Hir(node) => {
                     self.process_node(inherited_state.clone(), unwrap_hir_node(node))
                 }
@@ -116,7 +120,9 @@ impl Ast {
             TagName::Anchor => {
                 for attr in attributes {
                     match attr {
-                        Attr::Href(link) => inherited_state.text_options.link = Some(link.to_tendril()),
+                        Attr::Href(link) => {
+                            inherited_state.text_options.link = Some(link.to_tendril())
+                        }
                         Attr::Anchor(a) => self.current_textbox.borrow_mut().set_anchor(a),
                         _ => {}
                     }
@@ -125,6 +131,9 @@ impl Ast {
             }
             TagName::Div => {
                 self.push_text_box(inherited_state.clone());
+
+                Self::update_align(&mut inherited_state, &attributes);
+
                 self.process_content(inherited_state.clone(), content);
                 self.push_text_box(inherited_state);
             }
@@ -140,9 +149,9 @@ impl Ast {
                 self.process_content(inherited_state.clone(), content);
 
                 let indent = inherited_state.global_indent;
-                
+
                 self.push_text_box(inherited_state);
-                
+
                 if indent == DEFAULT_MARGIN / 2. {
                     self.push_spacer();
                 }
@@ -159,7 +168,8 @@ impl Ast {
                 inherited_state.text_options.code = true;
                 self.process_content(inherited_state, content);
             }
-            TagName::Details => { //TODO
+            TagName::Details => {
+                //TODO
                 return;
                 self.push_text_box(inherited_state);
                 self.push_spacer();
@@ -174,7 +184,8 @@ impl Ast {
                 tracing::warn!("Summary can only be in an Details element");
                 return;
             }
-            TagName::Section => { //TODO
+            TagName::Section => {
+                //TODO
                 return;
             }
             TagName::EmphasisOrItalic => {
@@ -185,7 +196,11 @@ impl Ast {
                 self.push_text_box(inherited_state.clone());
                 self.push_spacer();
 
-                inherited_state.set_align(attributes.iter().find_map(|attr| attr.to_align()));
+                Self::update_align(&mut inherited_state, &attributes);
+                self.current_textbox
+                    .borrow_mut()
+                    .set_align_or_default(inherited_state.text_options.align);
+
                 inherited_state.text_options.bold = true;
                 self.current_textbox.borrow_mut().font_size *= header.size_multiplier();
 
@@ -195,13 +210,16 @@ impl Ast {
                 self.process_content(inherited_state.clone(), content);
 
                 let anchor = self
-                    .current_textbox.borrow()
+                    .current_textbox
+                    .borrow()
                     .texts
                     .iter()
                     .flat_map(|t| t.text.chars())
                     .collect();
                 let anchor = self.anchorizer.anchorize(anchor);
-                self.current_textbox.borrow_mut().set_anchor(format!("#{anchor}"));
+                self.current_textbox
+                    .borrow_mut()
+                    .set_anchor(format!("#{anchor}"));
                 self.push_text_box(inherited_state);
                 self.push_spacer();
             }
@@ -232,7 +250,9 @@ impl Ast {
                     }
                 }
                 if is_checkbox {
-                    self.current_textbox.borrow_mut().set_checkbox(Some(is_checked));
+                    self.current_textbox
+                        .borrow_mut()
+                        .set_checkbox(Some(is_checked));
                 }
                 self.process_content(inherited_state, content);
             }
@@ -248,11 +268,16 @@ impl Ast {
             }
             TagName::PreformattedText => {
                 self.push_text_box(inherited_state.clone());
-                let style = attributes.iter().find_map(|attr| attr.to_style()).unwrap_or_default();
+                let style = attributes
+                    .iter()
+                    .find_map(|attr| attr.to_style())
+                    .unwrap_or_default();
                 for style in style::Iter::new(&style) {
                     if let Style::BackgroundColor(color) = style {
                         let native_color = self.native_color(color);
-                        self.current_textbox.borrow_mut().set_background_color(native_color);
+                        self.current_textbox
+                            .borrow_mut()
+                            .set_background_color(native_color);
                     }
                 }
                 inherited_state.text_options.pre_formatted = true;
@@ -267,7 +292,10 @@ impl Ast {
                 self.process_content(inherited_state, content);
             }
             TagName::Span => {
-                let style_str = attributes.iter().find_map(|attr|attr.to_style()).unwrap_or_default();
+                let style_str = attributes
+                    .iter()
+                    .find_map(|attr| attr.to_style())
+                    .unwrap_or_default();
                 for style in style::Iter::new(&style_str) {
                     match style {
                         Style::Color(color) => {
@@ -317,7 +345,7 @@ impl Ast {
         }
     }
 
-    fn text(&self, text_box: &mut TextBox, mut state: InheritedState, mut string: String){
+    fn text(&self, text_box: &mut TextBox, mut state: InheritedState, mut string: String) {
         let text_native_color = self.native_color(self.theme.text_color);
         if string == "\n" {
             if state.text_options.pre_formatted {
@@ -380,8 +408,7 @@ impl Ast {
             //    }
             //}
             if state.text_options.block_quote >= 1 {
-                text_box
-                    .set_quote_block(state.text_options.block_quote as usize);
+                text_box.set_quote_block(state.text_options.block_quote as usize);
             }
             if state.text_options.code {
                 text = text
@@ -483,11 +510,17 @@ impl Ast {
     }
 
     // https://html.spec.whatwg.org/multipage/tables.html#the-table-element
-    fn process_table(&mut self, table: &mut Table, inherited_state: InheritedState, content: Content) {
+    fn process_table(
+        &mut self,
+        table: &mut Table,
+        inherited_state: InheritedState,
+        content: Content,
+    ) {
         Self::process_node_content(
             content,
-                |_| {},
-                |node| match node.tag {
+            |_| {},
+            |node| {
+                match node.tag {
                 TagName::TableHead | TagName::TableBody => {
                     self.process_table_head_body(table, inherited_state.clone(), node.content);
                 }
@@ -497,10 +530,16 @@ impl Ast {
                 }
                 _ => tracing::warn!("Only TableHead, TableBody, TableRow and TableFoot can be inside an table, found: {:?}", node.tag),
             }
+            },
         );
         // TODO: filter out empty rows. (without cloning)
     }
-    fn process_table_head_body(&mut self, table: &mut Table, inherited_state: InheritedState, content: Content) {
+    fn process_table_head_body(
+        &mut self,
+        table: &mut Table,
+        inherited_state: InheritedState,
+        content: Content,
+    ) {
         Self::process_node_content(
             content,
             |_| {},
@@ -509,47 +548,72 @@ impl Ast {
                     table.rows.push(vec![]);
                     self.process_table_row(table, inherited_state.clone(), node.content)
                 }
-                _ => tracing::warn!("Only TableRows can be inside an TableHead or TableBody, found: {:?}", node.tag)
-            }
+                _ => tracing::warn!(
+                    "Only TableRows can be inside an TableHead or TableBody, found: {:?}",
+                    node.tag
+                ),
+            },
         );
     }
 
     // https://html.spec.whatwg.org/multipage/tables.html#the-tr-element
-    fn process_table_row(&mut self, table: &mut Table, inherited_state: InheritedState, content: Content) {
+    fn process_table_row(
+        &mut self,
+        table: &mut Table,
+        inherited_state: InheritedState,
+        content: Content,
+    ) {
         Self::process_node_content(
             content,
             |_| {},
             |node| {
                 let mut inherited_state = inherited_state.clone();
-                inherited_state.set_align(node.attributes.iter().find_map(|attr| attr.to_align()));
+                Self::update_align(&mut inherited_state, &node.attributes);
                 match node.tag {
                     TagName::TableHeader => self.process_table_header(table, inherited_state, node.content),
                     TagName::TableDataCell => self.process_table_cell(table, inherited_state, node.content),
                     _ => tracing::warn!("Only TableHead, TableBody, TableRow and TableFoot can be inside an table, found: {:?}", node.tag),
                 }
-            }
+            },
         );
     }
 
     // https://html.spec.whatwg.org/multipage/tables.html#the-th-element
-    fn process_table_header(&mut self, table: &mut Table, mut inherited_state: InheritedState, content: Content) {
-        let row = table.rows.last_mut().expect("There should be at least one row.");
+    fn process_table_header(
+        &mut self,
+        table: &mut Table,
+        mut inherited_state: InheritedState,
+        content: Content,
+    ) {
+        let row = table
+            .rows
+            .last_mut()
+            .expect("There should be at least one row.");
         // TODO allow anything inside tables not only text.
         inherited_state.text_options.bold = true;
         Self::process_node_content(
             content,
             |text| {
                 let mut tb = TextBox::new(vec![], self.hidpi_scale);
+                tb.set_align_or_default(inherited_state.text_options.align);
                 self.text(&mut tb, inherited_state.clone(), text);
                 row.push(tb);
             },
             |_| tracing::warn!("Currently only text is allowed in an TableHeader."),
         );
     }
-    
+
     // https://html.spec.whatwg.org/multipage/tables.html#the-td-element
-    fn process_table_cell(&mut self, table: &mut Table, inherited_state: InheritedState, content: Content) {
-        let row = table.rows.last_mut().expect("There should be at least one row.");
+    fn process_table_cell(
+        &mut self,
+        table: &mut Table,
+        inherited_state: InheritedState,
+        content: Content,
+    ) {
+        let row = table
+            .rows
+            .last_mut()
+            .expect("There should be at least one row.");
         // TODO allow anything inside tables not only text.
         // when doing this make process_node generic over some output so it can be use here
 
@@ -557,23 +621,29 @@ impl Ast {
             content,
             |text| {
                 let mut tb = TextBox::new(vec![], self.hidpi_scale);
+                tb.set_align_or_default(inherited_state.text_options.align);
                 self.text(&mut tb, inherited_state.clone(), text);
                 row.push(tb);
             },
-            |_| tracing::warn!("Currently only text is allowed in an TableDataCell.")
+            |_| tracing::warn!("Currently only text is allowed in an TableDataCell."),
         );
     }
-    fn process_ordered_list(&mut self, mut inherited_state: InheritedState, content: Content, attributes: Attributes) {
+    fn process_ordered_list(
+        &mut self,
+        mut inherited_state: InheritedState,
+        content: Content,
+        attributes: Attributes,
+    ) {
         let mut index = 1;
         for attr in attributes {
             if let Attr::Start(start) = attr {
                 index = start;
             }
         }
-        
+
         Self::process_node_content(
             content,
-            |_| {}, 
+            |_| {},
             |node| match node.tag {
                 TagName::ListItem => {
                     inherited_state.list_prefix = Some(NonZeroUsize::try_from(index).ok());
@@ -581,30 +651,43 @@ impl Ast {
                     index += 1;
                 }
                 _ => tracing::warn!("Only ListItems can be inside an List"),
-            }
+            },
         )
     }
-    fn process_unordered_list(&mut self, mut inherited_state: InheritedState, content: Content, attributes: Attributes) {
-        Self::process_node_content(content, 
+    fn process_unordered_list(
+        &mut self,
+        mut inherited_state: InheritedState,
+        content: Content,
+        attributes: Attributes,
+    ) {
+        Self::process_node_content(
+            content,
             |_| {},
             |node| match node.tag {
                 TagName::ListItem => {
                     inherited_state.list_prefix = Some(None);
                     self.process_list_item(inherited_state.clone(), node.content, node.attributes);
-                },
+                }
                 _ => tracing::warn!("Only ListItems can be inside an List"),
-            }
+            },
         );
     }
-    fn process_list_item(&mut self, inherited_state: InheritedState, content: Content, attributes: Attributes) {
+    fn process_list_item(
+        &mut self,
+        inherited_state: InheritedState,
+        content: Content,
+        attributes: Attributes,
+    ) {
         tracing::warn!("No li impl");
         //let anchor = attributes.iter().find_map(|attr| attr.to_anchor());
         //self.push_text_box(inherited_state);
         //self.current_textbox.borrow_mut()
     }
-    
+
     fn process_node_content<T, N>(content: Content, mut text_fn: T, mut node_fn: N)
-        where T: FnMut(String), N: FnMut(HirNode)
+    where
+        T: FnMut(String),
+        N: FnMut(HirNode),
     {
         for node in content {
             match node {
@@ -612,5 +695,9 @@ impl Ast {
                 TextOrHirNode::Hir(node) => node_fn(unwrap_hir_node(node)),
             }
         }
+    }
+
+    fn update_align(state: &mut InheritedState, attributes: &Attributes) {
+        state.set_align(attributes.iter().find_map(|attr| attr.to_align()));
     }
 }

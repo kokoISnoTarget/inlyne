@@ -62,7 +62,7 @@ pub enum Attr {
 impl Attr {
     pub fn to_style(&self) -> Option<String> {
         if let Self::Style(style) = self {
-            Some(style.to_owned())   
+            Some(style.to_owned())
         } else {
             None
         }

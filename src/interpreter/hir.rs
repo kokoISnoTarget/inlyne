@@ -2,7 +2,12 @@ use crate::interpreter::html::{self, Attr, TagName};
 use crate::utils::markdown_to_html;
 use anyhow::Result;
 use anyhow::{bail, Context};
-use html5ever::{buffer_queue::BufferQueue, local_name, tendril::{fmt, Tendril}, tokenizer::{Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts}};
+use html5ever::{
+    buffer_queue::BufferQueue,
+    local_name,
+    tendril::{fmt, Tendril},
+    tokenizer::{Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts},
+};
 use smart_debug::SmartDebug;
 use std::{
     cell::RefCell,
@@ -124,10 +129,12 @@ impl Hir {
                 bail!("Missing implementation for end tag: {name}");
             }
         };
-        if tag_name.is_void() { return Ok(()) }
+        if tag_name.is_void() {
+            return Ok(());
+        }
 
         let to_close = self.to_close.pop().context("Expected closing tag")?;
-        
+
         if tag_name != to_close {
             bail!("Expected closing {to_close:?} tag but found {tag_name:?}")
         }
@@ -149,7 +156,7 @@ impl Hir {
             .push(TextOrHirNode::Text(string))
     }
     fn on_end(&mut self) {
-        self.to_close.iter().skip(1).for_each(|unclosed_tag|{
+        self.to_close.iter().skip(1).for_each(|unclosed_tag| {
             tracing::warn!("File contains unclosed html tag: {unclosed_tag:?}");
         })
     }
@@ -163,7 +170,7 @@ impl TokenSink for Hir {
             Token::TagToken(tag) => match tag.kind {
                 TagKind::StartTag => self.process_start_tag(tag),
                 TagKind::EndTag => {
-                    let e = self.process_end_tag(tag); 
+                    let e = self.process_end_tag(tag);
                     if let Err(e) = e {
                         tracing::error!("{e}");
                     }

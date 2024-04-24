@@ -38,7 +38,7 @@ impl Table {
         zoom: f32,
     ) -> Option<&'a Text> {
         let table_layout = self.layout(text_system, taffy, bounds, zoom).ok()?;
-        
+
         for (row, row_layout) in self.rows.iter().zip(table_layout.rows.iter()) {
             for (item, layout) in row.iter().zip(row_layout.iter()) {
                 if Rect::new(
@@ -95,7 +95,7 @@ impl Table {
 
         let mut nodes = Vec::new();
         let mut node_row = Vec::new();
-     
+
         for (y, row) in self.rows.iter().enumerate() {
             for (x, item) in row.iter().enumerate() {
                 let item = item.clone();

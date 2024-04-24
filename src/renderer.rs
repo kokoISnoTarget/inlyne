@@ -372,7 +372,7 @@ impl Renderer {
                         bounds,
                         self.zoom,
                     )?;
-                    // todo: remove old table-header render stuff 
+                    // todo: remove old table-header render stuff
                     //for (col, node) in layout.headers.iter().enumerate() {
                     //    if let Some(text_box) = table.headers.get(col) {
                     //        text_areas.push(text_box.text_areas(
