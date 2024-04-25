@@ -64,35 +64,7 @@ impl Hir {
         drop(self.current);
         unwrap_hir_node(self.root).content
     }
-
-    pub fn transpile_md(self, receiver: mpsc::Receiver<String>, sender: mpsc::Sender<Hir>) {
-        let mut input = BufferQueue::default();
-
-        let mut tok = Tokenizer::new(self, TokenizerOpts::default());
-
-        for md_string in receiver {
-            tracing::debug!(
-                "Received markdown for interpretation: {} bytes",
-                md_string.len()
-            );
-
-            let html = markdown_to_html(&md_string, Theme::default());
-
-            input.push_back(
-                Tendril::from_str(&html)
-                    .unwrap()
-                    .try_reinterpret::<fmt::UTF8>()
-                    .unwrap(),
-            );
-
-            let _ = tok.feed(&mut input);
-            assert!(input.is_empty());
-            tok.end();
-
-            sender.send(tok.sink.clone()).unwrap();
-        }
-    }
-
+    
     fn process_start_tag(&mut self, tag: Tag) {
         let tag_name = match TagName::try_from(&tag.name) {
             Ok(name) => name,
