@@ -48,11 +48,12 @@ impl InheritedState {
             ..Default::default()
         }
     }
-}
-
-impl InheritedState {
     fn set_align(&mut self, align: Option<Align>) {
         self.text_options.align = align.or(self.text_options.align);
+    }
+    fn set_align_from_attributes(&mut self, attributes: &Attributes) {
+        self.set_align(attributes.iter().find_map(|attr| attr.to_align()));
+
     }
 }
 
@@ -89,12 +90,12 @@ impl Ast {
         self.ast
     }
 
-    fn process_content(&mut self, inherited_state: InheritedState, content: Content) {
+    fn process_content(&mut self, mut inherited_state: InheritedState, content: Content) {
         for node in content {
             match node {
                 TextOrHirNode::Text(str) => self.text(
                     self.current_textbox.borrow_mut().deref_mut(),
-                    inherited_state.clone(),
+                    &mut inherited_state,
                     str,
                 ),
                 TextOrHirNode::Hir(node) => {
@@ -111,7 +112,11 @@ impl Ast {
         match node.tag {
             TagName::Paragraph => {
                 self.push_text_box(inherited_state.clone());
-
+                inherited_state.set_align_from_attributes(&attributes);
+                self.current_textbox
+                    .borrow_mut()
+                    .set_align_or_default(inherited_state.text_options.align);
+                    
                 self.process_content(inherited_state.clone(), content);
 
                 self.push_text_box(inherited_state.clone());
@@ -132,15 +137,14 @@ impl Ast {
             TagName::Div => {
                 self.push_text_box(inherited_state.clone());
 
-                Self::update_align(&mut inherited_state, &attributes);
-
+                inherited_state.set_align_from_attributes(&attributes);
+                self.current_textbox
+                    .borrow_mut()
+                    .set_align_or_default(inherited_state.text_options.align);
+                    
                 self.process_content(inherited_state.clone(), content);
                 self.push_text_box(inherited_state);
             }
-            //_ => {
-            //    tracing::warn!("Interpreter didn't implement {:?}", node.tag);
-            //    return;
-            //}
             TagName::BlockQuote => {
                 self.push_text_box(inherited_state.clone());
                 inherited_state.text_options.block_quote += 1;
@@ -196,7 +200,7 @@ impl Ast {
                 self.push_text_box(inherited_state.clone());
                 self.push_spacer();
 
-                Self::update_align(&mut inherited_state, &attributes);
+                inherited_state.set_align_from_attributes(&attributes);
                 self.current_textbox
                     .borrow_mut()
                     .set_align_or_default(inherited_state.text_options.align);
@@ -316,7 +320,6 @@ impl Ast {
             TagName::Table => {
                 let mut table = Table::new();
                 self.process_table(&mut table, inherited_state, content);
-                self.push_spacer();
                 self.push_element(table);
                 self.push_spacer();
                 return;
@@ -345,7 +348,7 @@ impl Ast {
         }
     }
 
-    fn text(&self, text_box: &mut TextBox, mut state: InheritedState, mut string: String) {
+    fn text(&self, text_box: &mut TextBox, state: &mut InheritedState, mut string: String) {
         let text_native_color = self.native_color(self.theme.text_color);
         if string == "\n" {
             if state.text_options.pre_formatted {
@@ -399,14 +402,7 @@ impl Ast {
             }
 
             let mut text = Text::new(string, self.hidpi_scale, text_native_color);
-            // TODO
-            //if let Some(prefix) = state.pending_list_prefix.take() {
-            //    if self.current_textbox.texts.is_empty() {
-            //        self.current_textbox.texts.push(
-            //            Text::new(prefix, self.hidpi_scale, text_native_color).make_bold(true),
-            //        );
-            //    }
-            //}
+            
             if state.text_options.block_quote >= 1 {
                 text_box.set_quote_block(state.text_options.block_quote as usize);
             }
@@ -568,7 +564,7 @@ impl Ast {
             |_| {},
             |node| {
                 let mut inherited_state = inherited_state.clone();
-                Self::update_align(&mut inherited_state, &node.attributes);
+                inherited_state.set_align_from_attributes(&node.attributes);
                 match node.tag {
                     TagName::TableHeader => self.process_table_header(table, inherited_state, node.content),
                     TagName::TableDataCell => self.process_table_cell(table, inherited_state, node.content),
@@ -596,7 +592,7 @@ impl Ast {
             |text| {
                 let mut tb = TextBox::new(vec![], self.hidpi_scale);
                 tb.set_align_or_default(inherited_state.text_options.align);
-                self.text(&mut tb, inherited_state.clone(), text);
+                self.text(&mut tb, &mut inherited_state, text);
                 row.push(tb);
             },
             |_| tracing::warn!("Currently only text is allowed in an TableHeader."),
@@ -607,7 +603,7 @@ impl Ast {
     fn process_table_cell(
         &mut self,
         table: &mut Table,
-        inherited_state: InheritedState,
+        mut inherited_state: InheritedState,
         content: Content,
     ) {
         let row = table
@@ -622,7 +618,7 @@ impl Ast {
             |text| {
                 let mut tb = TextBox::new(vec![], self.hidpi_scale);
                 tb.set_align_or_default(inherited_state.text_options.align);
-                self.text(&mut tb, inherited_state.clone(), text);
+                self.text(&mut tb, &mut inherited_state, text);
                 row.push(tb);
             },
             |_| tracing::warn!("Currently only text is allowed in an TableDataCell."),
@@ -640,7 +636,9 @@ impl Ast {
                 index = start;
             }
         }
-
+        self.push_text_box(inherited_state.clone());
+        inherited_state.global_indent += DEFAULT_MARGIN / 2.;
+        
         Self::process_node_content(
             content,
             |_| {},
@@ -652,7 +650,10 @@ impl Ast {
                 }
                 _ => tracing::warn!("Only ListItems can be inside an List"),
             },
-        )
+        );
+        if inherited_state.global_indent == DEFAULT_MARGIN / 2. {
+            self.push_spacer();
+        }
     }
     fn process_unordered_list(
         &mut self,
@@ -660,6 +661,9 @@ impl Ast {
         content: Content,
         attributes: Attributes,
     ) {
+        self.push_text_box(inherited_state.clone());
+        inherited_state.global_indent += DEFAULT_MARGIN / 2.;
+
         Self::process_node_content(
             content,
             |_| {},
@@ -671,17 +675,39 @@ impl Ast {
                 _ => tracing::warn!("Only ListItems can be inside an List"),
             },
         );
+        if inherited_state.global_indent == DEFAULT_MARGIN / 2. {
+            self.push_spacer();
+        }
     }
     fn process_list_item(
         &mut self,
-        inherited_state: InheritedState,
+        mut inherited_state: InheritedState,
         content: Content,
         attributes: Attributes,
     ) {
-        tracing::warn!("No li impl");
-        //let anchor = attributes.iter().find_map(|attr| attr.to_anchor());
-        //self.push_text_box(inherited_state);
-        //self.current_textbox.borrow_mut()
+        //self.push_text_box(inherited_state.clone());
+        let anchor = attributes.iter().find_map(|attr| attr.to_anchor());
+
+        // 
+        let first_child_is_checkbox = if let Some(TextOrHirNode::Hir(node)) = content.first() {
+            if node.borrow().tag == TagName::Input {
+                node.borrow().attributes.iter().any(|attr| matches!(attr, Attr::IsCheckbox))
+            } else { false }
+        } else { false };
+        if !first_child_is_checkbox {
+            let prefix = match inherited_state.list_prefix {
+                Some(Some(num)) => format!("{num}. "),
+                Some(None) => String::from("· "),
+                _ => unreachable!("ListItem should have an prefix from ether ListType.")
+            };
+            self.current_textbox.borrow_mut().texts.push(                        
+                Text::new(prefix, self.hidpi_scale, self.native_color(self.theme.text_color)).make_bold(true),
+            )
+        }
+        
+        self.process_content(inherited_state.clone(), content);
+        
+        self.push_text_box(inherited_state)
     }
 
     fn process_node_content<T, N>(content: Content, mut text_fn: T, mut node_fn: N)
@@ -695,9 +721,5 @@ impl Ast {
                 TextOrHirNode::Hir(node) => node_fn(unwrap_hir_node(node)),
             }
         }
-    }
-
-    fn update_align(state: &mut InheritedState, attributes: &Attributes) {
-        state.set_align(attributes.iter().find_map(|attr| attr.to_align()));
     }
 }
