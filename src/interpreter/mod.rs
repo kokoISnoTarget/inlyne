@@ -25,6 +25,7 @@ use html::{
     Attr, Element as InterpreterElement, TagName,
 };
 
+use crate::interpreter::ast::{Ast, AstOpts};
 use crate::interpreter::hir::Hir;
 use comrak::Anchorizer;
 use glyphon::FamilyOwned;
@@ -217,6 +218,14 @@ impl HtmlInterpreter {
         //let mut tok = Tokenizer::new(self, TokenizerOpts::default());
         let mut tok = Tokenizer::new(Hir::new(), TokenizerOpts::default());
 
+        let ast = Ast {
+            opts: AstOpts {
+                anchorizer: parking_lot::Mutex::new(Anchorizer::default()),
+                hidpi_scale: self.hidpi_scale,
+                surface_format: self.surface_format,
+                theme: self.theme,
+            },
+        };
         for md_string in receiver {
             tracing::debug!(
                 "Received markdown for interpretation: {} bytes",
@@ -240,14 +249,8 @@ impl HtmlInterpreter {
             assert!(input.is_empty());
             tok.end();
 
-            let ast = ast::Ast {
-                surface_format: self.surface_format.clone(),
-                hidpi_scale: self.hidpi_scale.clone(),
-                theme: self.theme.clone(),
-                ..ast::Ast::new()
-            };
             *self.element_queue.lock().unwrap() =
-                ast.interpret(std::mem::take(&mut tok.sink)).into_inner();
+                ast.interpret(std::mem::take(&mut tok.sink)).into();
             self.window.finished_single_doc();
             //}
         }

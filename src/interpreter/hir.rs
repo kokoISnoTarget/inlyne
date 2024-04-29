@@ -9,6 +9,8 @@ use html5ever::{
     tokenizer::{Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts},
 };
 use smart_debug::SmartDebug;
+use std::sync::Arc;
+use std::sync::Weak as ArcWeak;
 use std::{
     cell::RefCell,
     rc::{Rc, Weak},
@@ -17,54 +19,44 @@ use std::{
 };
 use syntect::highlighting::Theme;
 
-type RcNode = Rc<RefCell<HirNode>>;
-type WeakNode = Weak<RefCell<HirNode>>;
-
 #[derive(Debug, Clone)]
 pub enum TextOrHirNode {
     Text(String),
-    Hir(RcNode),
+    Hir(usize),
 }
 
 #[derive(SmartDebug, Clone)]
 pub struct HirNode {
-    #[debug(skip)]
-    pub parent: WeakNode,
     pub tag: TagName,
     pub attributes: Vec<Attr>,
     pub content: Vec<TextOrHirNode>,
 }
-pub fn unwrap_hir_node(node: RcNode) -> HirNode {
-    Rc::try_unwrap(node).unwrap().into_inner()
-}
 
 #[derive(SmartDebug, Clone)]
 pub struct Hir {
-    root: RcNode,
+    nodes: Vec<HirNode>,
     #[debug(skip)]
-    current: RcNode,
+    parents: Vec<usize>,
     to_close: Vec<TagName>,
 }
 impl Hir {
     pub fn new() -> Self {
-        let root = Rc::new(RefCell::new(HirNode {
-            parent: Default::default(),
+        let root = HirNode {
             tag: TagName::Root,
             attributes: vec![],
             content: vec![],
-        }));
+        };
         Self {
-            root: Rc::clone(&root),
-            current: root,
+            nodes: vec![root],
+            parents: vec![0],
             to_close: vec![TagName::Root],
         }
     }
 
-    pub fn content(self) -> Vec<TextOrHirNode> {
-        drop(self.current);
-        unwrap_hir_node(self.root).content
+    pub fn content(self) -> Vec<HirNode> {
+        self.nodes
     }
-    
+
     fn process_start_tag(&mut self, tag: Tag) {
         let tag_name = match TagName::try_from(&tag.name) {
             Ok(name) => name,
@@ -75,23 +67,25 @@ impl Hir {
         };
         let attrs = html::attr::Iter::new(&tag.attrs).collect();
 
-        let node = Rc::new(RefCell::new(HirNode {
-            parent: Rc::downgrade(&self.current),
+        let node = HirNode {
             tag: tag_name,
             attributes: attrs,
             content: vec![],
-        }));
+        };
 
-        self.current
-            .borrow_mut()
+        let index = self.nodes.len();
+        self.nodes
+            .get_mut(*self.parents.last().expect("Node should have parent"))
+            .unwrap()
             .content
-            .push(TextOrHirNode::Hir(Rc::clone(&node)));
+            .push(TextOrHirNode::Hir(index));
+
+        self.nodes.push(node);
 
         if tag.self_closing || tag_name.is_void() {
             return;
         }
-
-        self.current = node;
+        self.parents.push(self.nodes.len() - 1);
         self.to_close.push(tag_name);
     }
     fn process_end_tag(&mut self, tag: Tag) -> anyhow::Result<()> {
@@ -110,22 +104,15 @@ impl Hir {
         if tag_name != to_close {
             bail!("Expected closing {to_close:?} tag but found {tag_name:?}")
         }
-        let parent = {
-            self.current
-                .borrow()
-                .parent
-                .upgrade()
-                .context("Node has no parent")?
-        };
-        self.current = parent;
-
+        self.parents.pop();
         Ok(())
     }
     fn on_text(&mut self, string: String) {
-        self.current
-            .borrow_mut()
+        self.nodes
+            .get_mut(*self.parents.last().expect("Node should have parent"))
+            .unwrap()
             .content
-            .push(TextOrHirNode::Text(string))
+            .push(TextOrHirNode::Text(string));
     }
     fn on_end(&mut self) {
         self.to_close.iter().skip(1).for_each(|unclosed_tag| {

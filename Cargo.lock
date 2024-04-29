@@ -1985,6 +1985,7 @@ dependencies = [
  "pollster",
  "pretty_assertions",
  "raw-window-handle",
+ "rayon",
  "resvg",
  "serde",
  "serde_yaml",
