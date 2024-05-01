@@ -17,6 +17,7 @@ use std::{
     str::FromStr,
     sync::mpsc,
 };
+use std::fmt::{Display, Formatter};
 use syntect::highlighting::Theme;
 
 #[derive(Debug, Clone)]
@@ -30,6 +31,15 @@ pub struct HirNode {
     pub tag: TagName,
     pub attributes: Vec<Attr>,
     pub content: Vec<TextOrHirNode>,
+}
+impl HirNode {
+    const fn new(tag: TagName, attributes: Vec<Attr>) -> Self {
+        Self {
+            tag,
+            attributes,
+            content: vec![]
+        }
+    }
 }
 
 #[derive(SmartDebug, Clone)]
@@ -57,6 +67,14 @@ impl Hir {
         self.nodes
     }
 
+    fn current_node(&mut self) -> &mut HirNode {
+        self.nodes
+            .get_mut(
+            *self.parents.last().expect("There should be at least one parent")
+        )
+            .expect("Any parent should be in nodes")
+    }
+
     fn process_start_tag(&mut self, tag: Tag) {
         let tag_name = match TagName::try_from(&tag.name) {
             Ok(name) => name,
@@ -67,20 +85,12 @@ impl Hir {
         };
         let attrs = html::attr::Iter::new(&tag.attrs).collect();
 
-        let node = HirNode {
-            tag: tag_name,
-            attributes: attrs,
-            content: vec![],
-        };
-
         let index = self.nodes.len();
-        self.nodes
-            .get_mut(*self.parents.last().expect("Node should have parent"))
-            .unwrap()
+        self.current_node()
             .content
             .push(TextOrHirNode::Hir(index));
 
-        self.nodes.push(node);
+        self.nodes.push(HirNode::new(tag_name, attrs));
 
         if tag.self_closing || tag_name.is_void() {
             return;
@@ -108,9 +118,13 @@ impl Hir {
         Ok(())
     }
     fn on_text(&mut self, string: String) {
-        self.nodes
-            .get_mut(*self.parents.last().expect("Node should have parent"))
-            .unwrap()
+        let current_node = self.current_node();
+        
+        if string == "\n" && current_node.content.is_empty() {
+            return;
+        }
+        
+        current_node
             .content
             .push(TextOrHirNode::Text(string));
     }
@@ -146,5 +160,23 @@ impl TokenSink for Hir {
 impl Default for Hir {
     fn default() -> Self {
         Self::new()
+    }
+}
+impl Display for Hir {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        fn fmt_inner(f: &mut Formatter<'_>, hir: &Hir, current: usize, mut indent: usize) -> std::fmt::Result {
+            let node = hir.nodes.get(current).ok_or(std::fmt::Error)?;
+            
+            writeln!(f, "{:>indent$}{:?}:", "", node.tag)?;
+            indent += 2;
+            for ton in &node.content {
+                match ton {
+                    TextOrHirNode::Text(str) => writeln!(f, "{:>indent$}{str:?}", "")?,
+                    TextOrHirNode::Hir(node) => fmt_inner(f, hir, *node, indent)?,
+                }
+            }
+            Ok(())
+        }
+        fmt_inner(f, self, 0, 0)
     }
 }
