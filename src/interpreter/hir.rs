@@ -9,6 +9,7 @@ use html5ever::{
     tokenizer::{Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts},
 };
 use smart_debug::SmartDebug;
+use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use std::sync::Weak as ArcWeak;
 use std::{
@@ -17,7 +18,6 @@ use std::{
     str::FromStr,
     sync::mpsc,
 };
-use std::fmt::{Display, Formatter};
 use syntect::highlighting::Theme;
 
 #[derive(Debug, Clone)]
@@ -37,7 +37,7 @@ impl HirNode {
         Self {
             tag,
             attributes,
-            content: vec![]
+            content: vec![],
         }
     }
 }
@@ -70,8 +70,11 @@ impl Hir {
     fn current_node(&mut self) -> &mut HirNode {
         self.nodes
             .get_mut(
-            *self.parents.last().expect("There should be at least one parent")
-        )
+                *self
+                    .parents
+                    .last()
+                    .expect("There should be at least one parent"),
+            )
             .expect("Any parent should be in nodes")
     }
 
@@ -86,9 +89,7 @@ impl Hir {
         let attrs = html::attr::Iter::new(&tag.attrs).collect();
 
         let index = self.nodes.len();
-        self.current_node()
-            .content
-            .push(TextOrHirNode::Hir(index));
+        self.current_node().content.push(TextOrHirNode::Hir(index));
 
         self.nodes.push(HirNode::new(tag_name, attrs));
 
@@ -119,14 +120,12 @@ impl Hir {
     }
     fn on_text(&mut self, string: String) {
         let current_node = self.current_node();
-        
+
         if string == "\n" && current_node.content.is_empty() {
             return;
         }
-        
-        current_node
-            .content
-            .push(TextOrHirNode::Text(string));
+
+        current_node.content.push(TextOrHirNode::Text(string));
     }
     fn on_end(&mut self) {
         self.to_close.iter().skip(1).for_each(|unclosed_tag| {
@@ -164,9 +163,14 @@ impl Default for Hir {
 }
 impl Display for Hir {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        fn fmt_inner(f: &mut Formatter<'_>, hir: &Hir, current: usize, mut indent: usize) -> std::fmt::Result {
+        fn fmt_inner(
+            f: &mut Formatter<'_>,
+            hir: &Hir,
+            current: usize,
+            mut indent: usize,
+        ) -> std::fmt::Result {
             let node = hir.nodes.get(current).ok_or(std::fmt::Error)?;
-            
+
             writeln!(f, "{:>indent$}{:?}:", "", node.tag)?;
             indent += 2;
             for ton in &node.content {

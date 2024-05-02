@@ -465,7 +465,9 @@ impl Renderer {
                                 }
                             }
                         }
-                        let last_row_node = node_row.last().unwrap();
+                        let Some(last_row_node) = node_row.last() else {
+                            continue;
+                        };
                         let y = last_row_node.location.y
                             + last_row_node.size.height
                             + TABLE_ROW_GAP / 2.;
