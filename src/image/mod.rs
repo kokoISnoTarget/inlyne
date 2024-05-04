@@ -227,7 +227,7 @@ impl Image {
 
             let mut src_path = PathBuf::from(&src);
             if src_path.is_relative() {
-                if let Some(parent_dir) = std::env::current_dir().ok() {
+                if let Ok(parent_dir) = std::env::current_dir() {
                     src_path = parent_dir.join(src_path.strip_prefix("./").unwrap_or(&src_path));
                 }
             }

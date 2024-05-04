@@ -4,28 +4,22 @@ use crate::interpreter::hir::{Hir, HirNode, TextOrHirNode};
 use crate::interpreter::html::attr::PrefersColorScheme;
 use crate::interpreter::html::picture::Builder;
 use crate::interpreter::html::style::{FontStyle, FontWeight, Style, TextDecoration};
-use crate::interpreter::html::{attr, style, Attr, HeaderType, Picture, TagName};
-use crate::interpreter::{html, Span, WindowInteractor};
+use crate::interpreter::html::{style, Attr, HeaderType, Picture, TagName};
+use crate::interpreter::{Span, WindowInteractor};
 use crate::opts::ResolvedTheme;
-use crate::positioner::{Positioned, Row, Section, Spacer, DEFAULT_MARGIN};
+use crate::positioner::{Positioned, Section, Spacer, DEFAULT_MARGIN};
 use crate::table::Table;
 use crate::text::{Text, TextBox};
 use crate::utils::{Align, ImageCache};
-use crate::{table, Element};
+use crate::Element;
 use comrak::Anchorizer;
 use glyphon::FamilyOwned;
-use html5ever::tendril::{SliceExt, StrTendril};
-use lyon::geom::utils::tangent;
 use parking_lot::Mutex;
 use rayon::prelude::*;
 use std::borrow::Cow;
-use std::cell::{Cell, Ref, RefCell};
-use std::collections::VecDeque;
 use std::marker::PhantomData;
-use std::num::{NonZeroU8, NonZeroUsize};
 use std::sync::Arc;
 use wgpu::TextureFormat;
-use winit::event::VirtualKeyCode::F;
 
 #[derive(Debug, Clone, Default)]
 struct TextOptions {
@@ -62,9 +56,7 @@ impl InheritedState {
     }
 }
 
-type Content<'a> = &'a [TextOrHirNode];
 type Attributes<'a> = &'a [Attr];
-//pub type Output<'a> = &'a mut Vec<Element>;
 pub type Input<'a> = &'a [HirNode];
 type State<'a> = Cow<'a, InheritedState>;
 type Opts<'a> = &'a AstOpts;
@@ -111,7 +103,7 @@ trait Push {
     fn push_spacer(&mut self);
     fn push_text_box(&mut self, text_box: &mut TextBox, opts: Opts, state: &State);
 }
-impl<T: OutputStream<Output=Element>> Push for T {
+impl<T: OutputStream<Output = Element>> Push for T {
     fn push_spacer(&mut self) {
         self.push(Spacer::invisible())
     }
@@ -205,16 +197,16 @@ trait Process {
         _output: out!(),
         _opts: Opts,
         _context: Self::Context<'_>,
-        _content: impl IntoIterator<Item=&'a TextOrHirNode>,
+        _content: impl IntoIterator<Item = &'a TextOrHirNode>,
         _state: State,
     ) {
         unimplemented!()
     }
 
     fn process_node<T, N>(input: Input, node: &HirNode, mut text_fn: T, mut node_fn: N)
-        where
-            T: FnMut(&String),
-            N: FnMut(&HirNode),
+    where
+        T: FnMut(&String),
+        N: FnMut(&HirNode),
     {
         node.content.iter().for_each(|node| match node {
             TextOrHirNode::Text(text) => text_fn(text),
@@ -226,7 +218,7 @@ trait Process {
     }
     fn text(text_box: &mut TextBox, mut string: &str, opts: Opts, mut state: State) {
         let text_native_color = opts.native_color(opts.theme.text_color);
-        if string == "\n" {
+        if string.trim().is_empty() {
             if state.text_options.pre_formatted {
                 text_box.texts.push(Text::new(
                     "\n".to_string(),
@@ -234,27 +226,6 @@ trait Process {
                     text_native_color,
                 ));
             }
-            if let Some(last_text) = text_box.texts.last() {
-                if let Some(last_char) = last_text.text.chars().last() {
-                    if !last_char.is_whitespace() {
-                        text_box.texts.push(Text::new(
-                            " ".to_string(),
-                            opts.hidpi_scale,
-                            text_native_color,
-                        ));
-                    }
-                }
-            }
-            // TODO
-            //if let Some((row, newline_counter)) = state.inline_images.take() {
-            //    if newline_counter == 0 {
-            //        self.push_element(row);
-            //        self.push_spacer();
-            //    } else {
-            //        state.inline_images = Some((row, newline_counter - 1));
-            //    }
-            //}
-        } else if string.trim().is_empty() && !state.text_options.pre_formatted {
             if let Some(last_text) = text_box.texts.last() {
                 if let Some(last_char) = last_text.text.chars().last() {
                     if !last_char.is_whitespace() {
@@ -296,14 +267,6 @@ trait Process {
                     text = text.make_underlined(true);
                 }
             }
-            // TODO
-            //for elem in self.state.element_stack.iter().rev() {
-            //    if let crate::interpreter::html::element::Element::Header(header) = elem {
-            //        self.current_textbox.font_size *= header.ty.size_multiplier();
-            //        text = text.make_bold(true);
-            //        break;
-            //    }
-            //}
             if let Some(link) = state.to_mut().text_options.link.take() {
                 text = text.with_link(link.to_string());
                 text = text.with_color(opts.native_color(opts.theme.link_color));
@@ -380,7 +343,7 @@ impl Process for FlowProcess {
             TagName::Div => {
                 output.push_text_box(context, opts, &state);
 
-                state.to_mut().set_align_from_attributes(&attributes);
+                state.to_mut().set_align_from_attributes(attributes);
                 context.set_align_or_default(state.text_options.align);
 
                 FlowProcess::process_content(
@@ -458,7 +421,7 @@ impl Process for FlowProcess {
                 output.push_text_box(context, opts, &state);
                 output.push_spacer();
 
-                state.to_mut().set_align_from_attributes(&attributes);
+                state.to_mut().set_align_from_attributes(attributes);
                 context.set_align_or_default(state.text_options.align);
 
                 state.to_mut().text_options.bold = true;
@@ -593,21 +556,17 @@ impl Process for FlowProcess {
             }
             TagName::TableHead | TagName::TableBody => {
                 tracing::warn!("TableHead and TableBody can only be in an Table element");
-                return;
             }
             TagName::TableRow => {
                 tracing::warn!("TableRow can only be in an Table element");
-                return;
             }
             TagName::TableDataCell => {
                 tracing::warn!(
                     "TableDataCell can only be in an TableRow or an TableHeader element"
                 );
-                return;
             }
             TagName::TableHeader => {
                 tracing::warn!("TableDataCell can only be in an TableRow element");
-                return;
             }
             TagName::Underline => {
                 state.to_mut().text_options.underline = true;
@@ -694,14 +653,7 @@ impl Process for DetailsProcess {
         let s = &mut section_content.map(Positioned::new);
         let mut tb = TextBox::new(vec![], opts.hidpi_scale);
 
-        FlowProcess::process_content(
-            input,
-            s,
-            opts,
-            &mut tb,
-            content,
-            state.clone(),
-        );
+        FlowProcess::process_content(input, s, opts, &mut tb, content, state.clone());
         s.push_text_box(&mut tb, opts, &state);
         section.elements = section_content;
         output.push(section)
@@ -800,9 +752,10 @@ impl Process for ListItemProcess {
         node: &HirNode,
         state: State,
     ) {
-        // TODO
         let anchor = node.attributes.iter().find_map(|attr| attr.to_anchor());
-
+        if let Some(anchor) = anchor {
+            context.set_anchor(anchor)
+        }
         let first_child_is_checkbox = if let Some(TextOrHirNode::Hir(node)) = node.content.first() {
             let node = Self::get_node(input, *node);
             if node.tag == TagName::Input {
@@ -866,7 +819,7 @@ impl ImageProcess {
 impl Process for ImageProcess {
     type Context<'a> = Option<Builder>;
     fn process(
-        input: Input,
+        _input: Input,
         output: out!(),
         opts: Opts,
         mut context: Self::Context<'_>,
@@ -894,7 +847,7 @@ impl Process for ImageProcess {
         }
 
         match builder.try_finish() {
-            Ok(pic) => Self::push_image_from_picture(output, pic, opts, state.clone()), // TODO
+            Ok(pic) => Self::push_image_from_picture(output, pic, opts, state.clone()),
             Err(err) => tracing::warn!("Invalid <img>: {err}"),
         }
     }
@@ -954,11 +907,11 @@ impl Process for PictureProcess {
                 }
             }
         });
-        
+
         let Some(last) = iter.next_back() else {
             return;
         };
-        
+
         for node in iter {
             SourceProcess::process(input, output, opts, &mut builder, node, state.clone());
         }
@@ -979,7 +932,7 @@ impl Process for TableProcess {
         input: Input,
         output: out!(),
         opts: Opts,
-        context: Self::Context<'_>,
+        _context: Self::Context<'_>,
         node: &HirNode,
         state: State,
     ) {
@@ -1016,7 +969,7 @@ impl Process for TableHeadProcess {
         opts: Opts,
         context: Self::Context<'a>,
         node: &HirNode,
-        mut state: State,
+        state: State,
     ) {
         Self::process_node(
             input,
@@ -1058,7 +1011,7 @@ impl Process for TableRowProcess {
                 match node.tag {
                     TagName::TableHeader => TableCellProcess::process(input, output, opts, (context, true), node, state),
                     TagName::TableDataCell => TableCellProcess::process(input, output, opts, (context, false), node, state),
-                    _ => tracing::warn!("Only TableHead, TableBody, TableRow and TableFoot can be inside an table, found: {:?}", node.tag),
+                    _ => tracing::warn!("Only TableHeader and TableDataCell can be inside an TableRow, found: {:?}", node.tag),
                 }
             },
         );
@@ -1073,7 +1026,7 @@ impl Process for TableCellProcess {
     type Context<'a> = (&'a mut Table, bool);
     fn process<'a>(
         input: Input,
-        output: out!(),
+        _output: out!(),
         opts: Opts,
         (context, header): Self::Context<'a>,
         node: &HirNode,
@@ -1091,8 +1044,15 @@ impl Process for TableCellProcess {
         let mut tb = TextBox::new(vec![], opts.hidpi_scale);
         tb.set_align_or_default(state.text_options.align);
 
-        FlowProcess::process_content(input, &mut Dummy::new(), opts, &mut tb, &node.content, state.clone());
-        
+        FlowProcess::process_content(
+            input,
+            &mut Dummy::new(),
+            opts,
+            &mut tb,
+            &node.content,
+            state.clone(),
+        );
+
         row.push(tb);
     }
 }
