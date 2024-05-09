@@ -10,7 +10,7 @@ pub enum SelectionMode {
     Line,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum SelectionKind {
     Drag {
         start: Point,
@@ -25,13 +25,16 @@ pub enum SelectionKind {
         position: Point,
         time: Instant,
     },
+    #[default]
     None,
 }
 
+#[derive(Default)]
 pub struct Selection {
     pub selection: SelectionKind,
     pub text: String,
 }
+
 impl Selection {
     pub const fn new() -> Self {
         Self {
@@ -107,10 +110,5 @@ impl Selection {
     pub fn add_line(&mut self, str: &str) {
         self.text.push_str(str);
         self.text.push('\n');
-    }
-}
-impl Default for Selection {
-    fn default() -> Self {
-        Self::new()
     }
 }
