@@ -109,3 +109,8 @@ impl Selection {
         self.text.push('\n');
     }
 }
+impl Default for Selection {
+    fn default() -> Self {
+        Self::new()
+    }
+}

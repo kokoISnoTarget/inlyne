@@ -1,7 +1,5 @@
 use crate::interpreter::html::{self, Attr, TagName};
-use html5ever::{
-    tokenizer::{Tag, TagKind, Token, TokenSink, TokenSinkResult},
-};
+use html5ever::tokenizer::{Tag, TagKind, Token, TokenSink, TokenSinkResult};
 use smart_debug::SmartDebug;
 use std::fmt::{Display, Formatter};
 
@@ -87,9 +85,7 @@ impl Hir {
     fn process_end_tag(&mut self, tag: Tag) {
         let tag_name = match TagName::try_from(&tag.name) {
             Ok(name) => name,
-            Err(name) => {
-                return;
-            }
+            Err(_) => return,
         };
         if tag_name.is_void() {
             return;

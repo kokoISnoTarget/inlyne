@@ -1,6 +1,6 @@
 use std::sync::{
     atomic::{AtomicU32, Ordering},
-    mpsc, Arc, Mutex,
+    mpsc, Arc,
 };
 use std::time::{Duration, Instant};
 use std::{env, thread};
@@ -14,10 +14,10 @@ use crate::utils::Align;
 use crate::{Element, ImageCache};
 
 use base64::prelude::*;
+use parking_lot::Mutex;
 use syntect::highlighting::Theme as SyntectTheme;
 use wgpu::TextureFormat;
 use wiremock::{matchers, Mock, MockServer, ResponseTemplate};
-
 // We use a dummy window with an internal counter that keeps track of when rendering a single md
 // document is finished
 #[derive(Clone)]
@@ -61,7 +61,7 @@ impl WindowInteractor for DummyWindow {
 struct DummyCallback(AtomicCounter);
 
 impl ImageCallback for DummyCallback {
-    fn loaded_image(&self, _: String, _: Arc<Mutex<Option<ImageData>>>) {
+    fn loaded_image(&self, _: String, _: Arc<std::sync::Mutex<Option<ImageData>>>) {
         self.0.dec();
     }
 }
@@ -176,7 +176,7 @@ fn interpret_md_with_opts(text: &str, opts: InterpreterOpts) -> Vec<Element> {
         thread::sleep(Duration::from_millis(1));
     }
 
-    let mut elements_queue = element_queue.lock().unwrap();
+    let mut elements_queue = element_queue.lock();
     std::mem::take(&mut *elements_queue)
 }
 
