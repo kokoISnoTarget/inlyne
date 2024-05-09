@@ -67,7 +67,7 @@ impl Hir {
         let tag_name = match TagName::try_from(&tag.name) {
             Ok(name) => name,
             Err(name) => {
-                tracing::info!("Missing implementation for start tag: {name}");
+                tracing::info!("Missing implementation for tag: {name}");
                 return;
             }
         };
@@ -88,7 +88,6 @@ impl Hir {
         let tag_name = match TagName::try_from(&tag.name) {
             Ok(name) => name,
             Err(name) => {
-                tracing::info!("Missing implementation for end tag: {name}");
                 return;
             }
         };

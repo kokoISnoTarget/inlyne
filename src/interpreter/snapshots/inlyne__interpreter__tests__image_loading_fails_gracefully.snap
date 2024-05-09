@@ -1,6 +1,6 @@
 ---
 source: src/interpreter/tests.rs
-description: "![This actually returns JSON 😈](http://127.0.0.1:41781/snapshot.png)"
+description: "![This actually returns JSON 😈](http://127.0.0.1:45873/snapshot.png)"
 expression: "interpret_md_with_opts(&text, opts)"
 ---
 [
@@ -20,6 +20,9 @@ expression: "interpret_md_with_opts(&text, opts)"
             is_aligned: Some(Left),
             ..
         },
+    ),
+    Spacer(
+        InvisibleSpacer(5),
     ),
     Spacer(
         InvisibleSpacer(5),
