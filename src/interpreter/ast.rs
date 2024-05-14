@@ -16,6 +16,7 @@ use comrak::Anchorizer;
 use glyphon::FamilyOwned;
 use parking_lot::Mutex;
 use std::ops::{Deref, DerefMut};
+use std::rc::Rc;
 use std::sync::Arc;
 use wgpu::TextureFormat;
 
@@ -30,7 +31,7 @@ struct TextOptions {
     pub pre_formatted: bool,
     pub block_quote: u8,
     pub align: Option<Align>,
-    pub link: Option<String>,
+    pub link: Option<Rc<str>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -124,7 +125,7 @@ impl Ast {
     }
     pub fn interpret(&self, hir: Hir) {
         let nodes = hir.content();
-        let root = nodes.first().unwrap().content.clone();
+        let root = &nodes.first().unwrap().content;
         let state =
             InheritedState::with_span_color(self.opts.native_color(self.opts.theme.code_color));
 
@@ -135,7 +136,7 @@ impl Ast {
             input,
         };
 
-        root.into_iter()
+        root.iter()
             .filter_map(|ton| {
                 if let TextOrHirNode::Hir(node) = ton {
                     let mut out = vec![];
@@ -145,7 +146,7 @@ impl Ast {
                         &global,
                         &mut tb,
                         state.borrow(),
-                        global.input.get(node),
+                        global.input.get(*node),
                         &mut out,
                     );
                     out.push_text_box(&global, &mut tb, state);
