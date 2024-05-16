@@ -71,12 +71,7 @@ trait Push<T> {
     fn push_element<I: Into<T>>(&mut self, element: I);
     fn push_spacer(&mut self);
     fn push_text_box(&mut self, global: &Static, element: &mut TextBox, state: State);
-    fn push_image_from_picture(
-        &mut self,
-        global: &Static,
-        state: State,
-        picture: Picture,
-    );
+    fn push_image_from_picture(&mut self, global: &Static, state: State, picture: Picture);
 }
 impl Push<Element> for Vec<Element> {
     fn push_element<I: Into<Element>>(&mut self, element: I) {
@@ -100,12 +95,7 @@ impl Push<Element> for Vec<Element> {
             element.is_checkbox = tb.is_checkbox;
         }
     }
-    fn push_image_from_picture(
-        &mut self,
-        global: &Static,
-        state: State,
-        picture: Picture,
-    ) {
+    fn push_image_from_picture(&mut self, global: &Static, state: State, picture: Picture) {
         let align = picture.inner.align;
         let src = picture.resolve_src(global.opts.color_scheme).to_owned();
         let align = align.unwrap_or_default();
@@ -119,9 +109,9 @@ impl Push<Element> for Vec<Element> {
                 global.opts.hidpi_scale,
                 global.opts.window.lock().image_callback(),
             )
-                .unwrap(),
+            .unwrap(),
         }
-            .with_align(align);
+        .with_align(align);
 
         if let Some(ref link) = state.text_options.link {
             image.set_link(link.to_string())
