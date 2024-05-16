@@ -67,14 +67,18 @@ impl<'a> Input<'a> {
 }
 type Opts<'a> = &'a AstOpts;
 
-type Output<T> = Vec<T>;
-
 trait Push<T> {
     fn push_element<I: Into<T>>(&mut self, element: I);
     fn push_spacer(&mut self);
     fn push_text_box(&mut self, global: &Static, element: &mut TextBox, state: State);
+    fn push_image_from_picture(
+        &mut self,
+        global: &Static,
+        state: State,
+        picture: Picture,
+    );
 }
-impl Push<Element> for Output<Element> {
+impl Push<Element> for Vec<Element> {
     fn push_element<I: Into<Element>>(&mut self, element: I) {
         self.push(element.into());
     }
@@ -96,6 +100,54 @@ impl Push<Element> for Output<Element> {
             element.is_checkbox = tb.is_checkbox;
         }
     }
+    fn push_image_from_picture(
+        &mut self,
+        global: &Static,
+        state: State,
+        picture: Picture,
+    ) {
+        let align = picture.inner.align;
+        let src = picture.resolve_src(global.opts.color_scheme).to_owned();
+        let align = align.unwrap_or_default();
+        let is_url = src.starts_with("http://") || src.starts_with("https://");
+        let mut image = match global.opts.image_cache.lock().unwrap().get(&src) {
+            Some(image_data) if is_url => {
+                Image::from_image_data(image_data.clone(), global.opts.hidpi_scale)
+            }
+            _ => Image::from_src(
+                src,
+                global.opts.hidpi_scale,
+                global.opts.window.lock().image_callback(),
+            )
+                .unwrap(),
+        }
+            .with_align(align);
+
+        if let Some(ref link) = state.text_options.link {
+            image.set_link(link.to_string())
+        }
+        if let Some(size) = picture.inner.size {
+            image = image.with_size(size);
+        }
+
+        if Align::Left == align {
+            if let Some(Element::Row(row)) = self.iter_mut().next_back() {
+                row.elements.push(Positioned::new(image))
+            } else {
+                self.push_element(Row::with_image(image, global.opts.hidpi_scale))
+            }
+        } else {
+            self.push_element(image);
+            self.push_spacer()
+        }
+    }
+}
+struct Dummy;
+impl Push<Element> for Dummy {
+    fn push_element<I: Into<Element>>(&mut self, _element: I) {}
+    fn push_spacer(&mut self) {}
+    fn push_text_box(&mut self, _global: &Static, _element: &mut TextBox, _state: State) {}
+    fn push_image_from_picture(&mut self, _global: &Static, _state: State, _picture: Picture) {}
 }
 
 pub struct AstOpts {
@@ -219,14 +271,14 @@ trait Process {
         element: Self::Context<'_>,
         state: State,
         node: &HirNode,
-        output: &mut Output<Element>,
+        output: &mut impl Push<Element>,
     );
     fn process_content<'a>(
         _global: &Static,
         _element: Self::Context<'_>,
         _state: State,
         _input: impl IntoIterator<Item = &'a TextOrHirNode>,
-        _output: &mut Output<Element>,
+        _output: &mut impl Push<Element>,
     ) {
         unimplemented!()
     }
@@ -331,7 +383,7 @@ impl Process for FlowProcess {
         element: Self::Context<'_>,
         mut state: State,
         node: &HirNode,
-        output: &mut Output<Element>,
+        output: &mut impl Push<Element>,
     ) {
         let attributes = &node.attributes;
         match node.tag {
@@ -545,7 +597,7 @@ impl Process for FlowProcess {
         element: Self::Context<'_>,
         state: State,
         content: impl IntoIterator<Item = &'a TextOrHirNode>,
-        output: &mut Output<Element>,
+        output: &mut impl Push<Element>,
     ) {
         for node in content {
             match node {
@@ -572,7 +624,7 @@ impl Process for DetailsProcess {
         _element: Self::Context<'_>,
         state: State,
         node: &HirNode,
-        output: &mut Output<Element>,
+        output: &mut impl Push<Element>,
     ) {
         let mut section = Section::bare(global.opts.hidpi_scale);
         *section.hidden.get_mut() = true;
@@ -594,7 +646,7 @@ impl Process for DetailsProcess {
                     &mut tb,
                     state.borrow(),
                     &summary.content,
-                    &mut vec![],
+                    &mut Dummy,
                 );
 
                 *section.summary = Some(Positioned::new(tb));
@@ -630,7 +682,7 @@ impl Process for OrderedListProcess {
         element: Self::Context<'_>,
         mut state: State,
         node: &HirNode,
-        output: &mut Output<Element>,
+        output: &mut impl Push<Element>,
     ) {
         let mut index = 1;
         for attr in &node.attributes {
@@ -672,7 +724,7 @@ impl Process for UnorderedListProcess {
         element: Self::Context<'_>,
         mut state: State,
         node: &HirNode,
-        output: &mut Output<Element>,
+        output: &mut impl Push<Element>,
     ) {
         output.push_text_box(global, element, state.borrow());
         state.global_indent += DEFAULT_MARGIN / 2.;
@@ -701,7 +753,7 @@ impl Process for ListItemProcess {
         (element, prefix): Self::Context<'_>,
         state: State,
         node: &HirNode,
-        output: &mut Output<Element>,
+        output: &mut impl Push<Element>,
     ) {
         let anchor = node.attributes.iter().find_map(|attr| attr.to_anchor());
         if let Some(anchor) = anchor {
@@ -740,62 +792,20 @@ impl Process for ListItemProcess {
 }
 
 struct ImageProcess;
-impl ImageProcess {
-    fn push_image_from_picture(
-        global: &Static,
-        state: State,
-        output: &mut Output<Element>,
-        picture: Picture,
-    ) {
-        let align = picture.inner.align;
-        let src = picture.resolve_src(global.opts.color_scheme).to_owned();
-        let align = align.unwrap_or_default();
-        let is_url = src.starts_with("http://") || src.starts_with("https://");
-        let mut image = match global.opts.image_cache.lock().unwrap().get(&src) {
-            Some(image_data) if is_url => {
-                Image::from_image_data(image_data.clone(), global.opts.hidpi_scale)
-            }
-            _ => Image::from_src(
-                src,
-                global.opts.hidpi_scale,
-                global.opts.window.lock().image_callback(),
-            )
-            .unwrap(),
-        }
-        .with_align(align);
-
-        if let Some(ref link) = state.text_options.link {
-            image.set_link(link.to_string())
-        }
-        if let Some(size) = picture.inner.size {
-            image = image.with_size(size);
-        }
-
-        if Align::Left == align {
-            if let Some(Element::Row(row)) = output.iter_mut().next_back() {
-                row.elements.push(Positioned::new(image))
-            } else {
-                output.push_element(Row::with_image(image, global.opts.hidpi_scale))
-            }
-        } else {
-            output.push_element(image);
-            output.push_spacer()
-        }
-    }
-}
 impl Process for ImageProcess {
     type Context<'a> = Option<Builder>;
     fn process(
         global: &Static,
-        mut element: Self::Context<'_>,
+        element: Self::Context<'_>,
         mut state: State,
         node: &HirNode,
-        output: &mut Output<Element>,
+        output: &mut impl Push<Element>,
     ) {
-        if element.is_none() {
-            element = Some(Picture::builder());
-        }
-        let mut builder = element.unwrap();
+        let mut builder = if let Some(builder) = element {
+            builder
+        } else {
+            Picture::builder()
+        };
 
         state.set_align_from_attributes(&node.attributes);
         if let Some(align) = state.text_options.align {
@@ -813,7 +823,7 @@ impl Process for ImageProcess {
         }
 
         match builder.try_finish() {
-            Ok(pic) => Self::push_image_from_picture(global, state, output, pic),
+            Ok(pic) => output.push_image_from_picture(global, state, pic),
             Err(err) => tracing::warn!("Invalid <img>: {err}"),
         }
     }
@@ -826,7 +836,7 @@ impl Process for SourceProcess {
         element: Self::Context<'_>,
         _state: State,
         node: &HirNode,
-        _output: &mut Output<Element>,
+        _output: &mut impl Push<Element>,
     ) {
         let mut media = None;
         let mut src_set = None;
@@ -857,7 +867,7 @@ impl Process for PictureProcess {
         _element: Self::Context<'_>,
         mut state: State,
         node: &HirNode,
-        output: &mut Output<Element>,
+        output: &mut impl Push<Element>,
     ) {
         let mut builder = Picture::builder();
 
@@ -898,7 +908,7 @@ impl Process for TableProcess {
         _element: Self::Context<'_>,
         state: State,
         node: &HirNode,
-        output: &mut Output<Element>,
+        output: &mut impl Push<Element>,
     ) {
         let mut table = Table::new();
         Self::process_with(
@@ -932,7 +942,7 @@ impl Process for TableHeadProcess {
         element: Self::Context<'_>,
         state: State,
         node: &HirNode,
-        output: &mut Output<Element>,
+        output: &mut impl Push<Element>,
     ) {
         Self::process_with(
             global,
@@ -961,7 +971,7 @@ impl Process for TableRowProcess {
         element: Self::Context<'_>,
         state: State,
         node: &HirNode,
-        output: &mut Output<Element>,
+        output: &mut impl Push<Element>,
     ) {
         Self::process_with(
             global,
@@ -998,7 +1008,7 @@ impl Process for TableCellProcess {
         (table, is_header): Self::Context<'_>,
         mut state: State,
         node: &HirNode,
-        _output: &mut Output<Element>,
+        _output: &mut impl Push<Element>,
     ) {
         let row = table
             .rows
@@ -1016,7 +1026,7 @@ impl Process for TableCellProcess {
             &mut tb,
             state,
             &node.content,
-            &mut vec![], // TODO allow anything inside tables not only text.
+            &mut Dummy, // TODO allow anything inside tables not only text.
         );
 
         row.push(tb);
