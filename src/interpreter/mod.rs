@@ -28,6 +28,7 @@ use html5ever::tendril::*;
 use html5ever::tokenizer::{
     BufferQueue, Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts,
 };
+use percent_encoding::percent_decode_str;
 use wgpu::TextureFormat;
 use winit::event_loop::EventLoopProxy;
 use winit::window::Window;
@@ -390,7 +391,10 @@ impl HtmlInterpreter {
             TagName::Anchor => {
                 for attr in attr::Iter::new(&tag.attrs) {
                     match attr {
-                        Attr::Href(link) => self.state.text_options.link.push(link),
+                        Attr::Href(link) => {
+                            let link = percent_decode_str(&link).decode_utf8_lossy();
+                            self.state.text_options.link.push(link.to_string());
+                        }
                         Attr::Anchor(a) => self.current_textbox.set_anchor(a),
                         _ => {}
                     }
